@@ -1,0 +1,177 @@
+---
+title: 'Practical Machine Learning Homework #2'
+author: "Danny Malter"
+date: "Friday, April 10, 2015"
+output: html_document
+---
+
+Load in the required packages
+```{r, warning=FALSE, message=FALSE}
+library(AppliedPredictiveModeling)
+library(caret)
+library(Hmisc)
+```
+
+#### Question 1 ####
+
+Load in the Alzheimer's disease data set
+
+```{r}
+data(AlzheimerDisease)
+```
+
+Below is the proper way to split the data into a training and testing set using the caret package.
+
+```{r}
+adData <- data.frame(diagnosis, predictors)
+trainIndex <- createDataPartition(diagnosis, p = 0.5, list = FALSE)
+training <- adData[trainIndex, ]
+testing <- adData[-trainIndex, ]
+```
+
+#### Question 2 ####
+
+Load in the concrete data set and split into a testing and training set
+```{r}
+data(concrete)
+set.seed(975)
+inTrain <- createDataPartition(mixtures$CompressiveStrength,
+                               p=0.75)[[1]]
+training <- mixtures[inTrain,]
+testing <- mixtures[-inTrain,]
+```
+
+Make a feature plot to see if there are any relationships between the outcome (Compressive Strength) and the other variables
+
+```{r}
+names <- colnames(concrete)
+names <- names[-length(names)]
+featurePlot(x=training[,names], y=training$CompressiveStrength, plot="pairs")
+```
+
+Plot the outcomes as a function of the index
+
+```{r}
+index <- seq_along(1:nrow(training))
+ggplot(data=training, aes(x=index, y=CompressiveStrength)) +
+    geom_point() +
+    theme_bw()
+```
+
+- The plot above makes it clear that there is a pattern between the index number and the outcome
+
+```{r}
+cutCS <- cut2(training$CompressiveStrength, g=4)
+summary(cutCS)
+```
+
+Plot the categorized outcomes
+```{r}
+ggplot(data = training, aes(y = index, x = cutCS)) + 
+    geom_boxplot() + 
+    geom_jitter(col = "blue") + 
+    theme_bw()
+```
+
+Plot the categorized income as function of the rest of the variables
+```{r}
+featurePlot(x = training[, names], y = cutCS, plot = "box")
+```
+
+#### Question 3 ####
+
+Load in the concrete data set and split into a testing and training set
+
+```{r}
+data(concrete)
+set.seed(975)
+inTrain <- createDataPartition(mixtures$CompressiveStrength,
+                               p=0.75)[[1]]
+training <- mixtures[inTrain,]
+testing <- mixtures[-inTrain,]
+```
+
+A histogram of the Superplasticizer variable
+```{r}
+ggplot(data = training, aes(x = Superplasticizer)) + 
+    geom_histogram() + 
+    theme_bw()
+```
+
+- It is clear that there are a lot of 0's in this parameter, so taking the log base 10 would yield infinities.
+
+
+#### Question 4 ####
+
+Load in the Alzheimer's disease data set
+
+```{r}
+set.seed(333)
+data(AlzheimerDisease)
+adData <- data.frame(diagnosis, predictors)
+trainIndex <- createDataPartition(diagnosis, p = 0.5, list = FALSE)
+training <- adData[trainIndex, ]
+testing <- adData[-trainIndex, ]
+```
+
+Find all the predictor variables in the training set that begin with IL
+
+```{r}
+set.seed(333)
+ss <- training[,grep('^IL', x = names(training) )]
+preProc <- preProcess(ss, method='pca', thresh=0.9, 
+                      outcome=training$diagnosis)
+preProc$rotation
+```
+- 7 components are required to achieve 90% of the variance
+
+#### Question 5 ####
+
+Load in the Alzheimer's disease data set
+
+```{r}
+set.seed(3433)
+data(AlzheimerDisease)
+adData <- data.frame(diagnosis, predictors)
+trainIndex <- createDataPartition(diagnosis, p = 0.5, list = FALSE)
+training <- adData[trainIndex, ]
+testing <- adData[-trainIndex, ]
+```
+
+```{r}
+set.seed(3433)
+## grep the predictors starting with 'IL'
+IL_str <- grep("^IL", colnames(training), value = TRUE)
+## make a subset of these predictors
+predictors_IL <- predictors[, IL_str]
+df <- data.frame(diagnosis, predictors_IL)
+inTrain = createDataPartition(df$diagnosis, p = 0.75)[[1]]
+training = df[inTrain, ]
+testing = df[-inTrain, ]
+```
+
+Fit a linear model and create a confusion matrix
+```{r, warning=FALSE}
+modFit <- train(diagnosis ~ ., method = "glm", data=training)
+finMod <- modFit$finalModel
+pred <- predict(modFit, testing)
+c1 <- confusionMatrix(pred, testing$diagnosis)
+print(c1)
+
+A1 <- c1$overall[1]
+```
+
+Same process with the caret package
+```{r, warning=FALSE}
+modelFit <- train(training$diagnosis ~ ., method = "glm", preProcess = "pca", 
+    data = training, trControl = trainControl(preProcOptions = list(thresh = 0.)))
+c2 <- confusionMatrix(testing$diagnosis, predict(modelFit, testing))
+print(c2)
+
+A2 <- c2$overall[1]
+```
+
+Check the accuracies of each model
+```{r, warning=FALSE}
+A1;A2
+```
