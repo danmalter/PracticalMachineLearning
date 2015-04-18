@@ -1,0 +1,403 @@
+---
+title: "Sample Assignment"
+author: "Danny Malter"
+date: "November 24, 2014"
+output: html_document
+---
+======================================================
+
+#### Loading and Processing ####
+- Install R packages and read in the csv files.
+```{r, echo=TRUE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(knitr)
+library(gridExtra)
+library(plyr)
+
+setwd("/Users/Malter/Desktop/sample")
+products <- read.csv("/Users/Malter/Desktop/sample/products.csv")
+leads <- read.csv("/Users/Malter/Desktop/sampleleads.csv")
+```
+
+#### Cleaning Data ####
+- NOTES:<br>
+1. I rounded the following variables down to the nearest whole number (Total Items Shipped, Total Items Kept, Total Feedback Given, Total Great Style, Total Poor Style, Total Poor Fit).
+2. I changed all of the percent values after rounding the above variables.
+3. I changed any style of 'work' to 'Work' <br>
+```{r, echo=FALSE}
+products$percent.kept <- (((products$Total.Items.Kept)/(products$Total.Items.Shipped))*100)
+products$percent.dollars.kept <- (((products$Total.Dollars.Kept)/(products$Total.Dollars.Shipped))*100)
+```
+
+#### Modeling ####
+My model will predict the probability of converted leads depending on all other variables, excluding ID numbers.  Due to the fact that all married leads converted and anybody with a household income over 77k was a converted lead, I did not include Married and HHIncome in my glm model because they were so predictive that the model would not converge.  However, they are very important variables and I used them in my logic to determine my predictions.
+
+##### Splitting Original Data Frame into Train and Test Data #####
+```{r, echo=FALSE}
+leads <- read.csv("/Volumes/MALTER/sample/leads.csv")
+leads$Sale.Type <- as.numeric(ifelse(leads$Sale.Type=="Field Shipment Shipment",0,1))
+temp <- leads$Sale.Type
+```
+
+```{r}
+# Want variables to be factors for the glm
+leads$Urban <- as.factor(leads$Urban)
+leads$Married <- as.factor(leads$Married)
+leads$Mobile <- as.factor(leads$Mobile)
+leads$Converted <- as.factor(leads$Converted)
+leads$Sale.Type <- as.factor(leads$Sale.Type)
+
+# Created a function that rounds age to be able to put age into discrete buckets for plotting.
+x.rounded <- function(x,k){return(round(x/k)*k)}
+leads$Lead.Age.Rounded <- x.rounded(leads$Lead.Age,5)
+
+# Split the data into 70% train and 30% test
+set.seed(123)
+sample.size <- floor(0.7*nrow(leads))
+train.ind <- sample(seq_len(nrow(leads)), size=sample.size)
+train <- leads[train.ind, ]
+test <- leads[-train.ind, ]
+```
+
+Due to the small amount of records, Married and HHIncome were nearly perfect splits and thus their inclusion in the glm prevented conversions.  Therefore, I took them out of the model, but used them in logic to determine my predictions.
+
+When I first ran the glm, Sale Type, Mobile, NumberHighBrands, and NumberLowBrands had a Pr(>|z|) > 0.05 indicating that they are insignificant for model predictors, so I re-ran the model without those variables.  Married and HHIncome were so predictive that the model would not converge, so I exluded them.  However, I included them in my prediction logic.  All of the kept variables have positive coefficients indicating that a one unit increase in any of the variables will increase the probability that the outcome is a 1 (converted).
+
+```{r}
+# Variables subtracted in fit are not included in the glm.  Married and HHIncome are too predictive and the glm model will not converge with them included.
+fit <- glm(Converted ~.-Married -Sale.Type - HHIncome - Lead.Age.Rounded
+           - Mobile - NumberHighBrands - NumberLowBrands, data=train[-1], family=binomial(logit))
+```
+
+
+```{r}
+# For best models, variables with only a Pr(>|z|) <= .05 should be used
+summary(fit)
+```
+
+```{r}
+# Reads in the exponentiated coefficients and fitting a probability to each record
+test$pred <- predict(fit, newdata=test, type="response")
+train$pred <- predict(fit, newdata=train, type="response")
+
+# Predict a 1 for probabilities over 0.5 and 0 for probabilities less than 0.5
+test$prediction <- ifelse(test$pred >= 0.50 | test$Married == 1 | test$HHIncome > 77, 1, 0)
+train$prediction <- ifelse(train$pred >= 0.50 | train$Married == 1 | train$HHIncome > 77, 1, 0)
+```
+
+Subset the data frame to where converted = 1 and non-converted = 0 to be able to measure accuracy of predictions and to create confusion matrices.
+```{r}
+ones <- test[which(test$Converted==1),]
+zeros <- test[which(test$Converted==0),]
+```
+
+- Test Data 
+    - I predicted 0 false positives and 102 true positives.
+    - I predicted 183 true negatives and 15 false positives
+```{r}
+table(ones$prediction)
+table(zeros$prediction)
+```
+
+```{r}
+ones <- train[which(train$Converted==1),]
+zeros <- train[which(train$Converted==0),]
+```
+
+- Train Data 
+    - I predicted 1 false positive and 223 true positives.
+    - I predicted 442 true negatives and 34 false positives
+```{r}
+table(ones$prediction)
+table(zeros$prediction)
+```
+
+The above model gives the probability that each lead has for converting. However, we already know from the exploratory analysis that anybody who is married converts and anybody with a salary over 77k converts.  Nobody over a 77k salary did not convert.
+
+```{r, echo=FALSE}
+#ordered.data <- train[order(-train$pred),]
+#head(ordered.data)
+```
+======================================================
+
+#### Univariate Modeling ####
+
+##### Sale Type #####
+```{r, echo=FALSE}
+leads$Urban <- as.integer(leads$Urban)
+leads$Married <- as.integer(leads$Married)
+leads$Mobile <- as.integer(leads$Mobile)
+leads$Converted <- as.integer(leads$Converted)
+
+train$Urban <- as.integer(train$Urban)
+train$Married <- as.integer(train$Married)
+train$Mobile <- as.integer(train$Mobile)
+train$Converted <- as.integer(train$Converted)
+
+test$Urban <- as.integer(test$Urban)
+test$Married <- as.integer(test$Married)
+test$Mobile <- as.integer(test$Mobile)
+test$Converted <- as.integer(test$Converted)
+```
+
+```{r, warning=FALSE}
+agg.sale.type <-aggregate(leads[,c(2,11)], by=list(leads$Sale.Type), 
+                          FUN=mean, na.rm=TRUE)
+```
+
+```{r}
+#Predictive because both have a large number of counts.
+sale.type.plot1 <- ggplot(data=agg.sale.type, aes(x=Group.1, y=Converted-1)) +
+    ylim(c(0.2,0.4)) +
+    geom_point() +
+    ggtitle("Conversion Rate for each Sales Type") +
+    xlab("Sale Type (0 = Field Shipment Shipment; 1 = In-Person)") +
+    ylab("Actual Conversion Rate")
+sale.type.plot2 <- ggplot(data=leads, aes(Sale.Type)) +
+    geom_histogram(aes(fill = Sale.Type)) +
+    ggtitle("Count of Sale Types") +
+    xlab("Sale Type (0 = Field Shipment Shipment; 1 = In-Person)") +
+    ylab("Count")
+grid.arrange(sale.type.plot1, sale.type.plot2, ncol=1)
+```
+
+##### Age #####
+
+```{r}
+agg.train.age <-aggregate(train[,c(13,11,12)], by=list(train$Lead.Age.Rounded), 
+                         FUN=mean, na.rm=TRUE)
+agg.test.age <-aggregate(test[,c(13,11,12)], by=list(test$Lead.Age.Rounded), 
+                          FUN=mean, na.rm=TRUE)
+
+# Subtract 1 from Converted because the levels were factors
+ggplot(data=agg.train.age, aes(x=Group.1, y=Converted-1))+
+    geom_point() +
+    geom_line() +
+    ggtitle("Age Univariate Response Plot") +
+    xlab("Age") +
+    ylab("Actual Conversion Rate")
+
+graph.univar.train.age <- ggplot() +
+    geom_line(data=agg.train.age, aes(x=Group.1, y=Converted-1, color='red')) +
+    geom_line(data=agg.train.age, aes(x=Group.1, y=pred, color='blue')) +
+    scale_color_manual(values = c("red", "blue"),
+                       labels = c("Converted Prediction",
+                                  "Converted Actual")) +
+    ggtitle("Train Data Age Univariate") + 
+    xlab("Age") +
+    ylab("Rate")
+graph.univar.test.age <- ggplot() +
+    geom_line(data=agg.test.age, aes(x=Group.1, y=Converted-1, color='red')) +
+    geom_line(data=agg.test.age, aes(x=Group.1, y=pred, color='blue')) +
+    scale_color_manual(values = c("red", "blue"),
+                       labels = c("Converted Prediction",
+                                  "Converted Actual")) +
+    ggtitle("Test Data Age Univariate") + 
+    xlab("Age") +
+    ylab("Rate")
+```
+
+- I bucketed the age variable into 5 year discrete buckets and plotted the calculated prediction as the mean of the predicted response value for each bucket, as well as the mean of the actual response value for each bucket to see if there was any predictive signal in the age variable.
+The univariate plots of prediction versus conversion using age show strong signal in the age variable.
+```{r}
+grid.arrange(graph.univar.train.age, graph.univar.test.age, ncol=1)
+```
+
+##### Number of High Brands #####
+```{r}
+leads$NumberHighBrands <- as.numeric(as.character(leads$NumberHighBrands))
+agg.NumberHighBrands <-aggregate(leads[,c(7,11)], by=list(leads$NumberHighBrands), 
+                                 FUN=mean, na.rm=TRUE)
+# Subtract 1 from Converted because the levels were factors
+agg.NumberHighBrands$Converted <- agg.NumberHighBrands$Converted-1
+print(agg.NumberHighBrands)
+
+ggplot(data=agg.NumberHighBrands, aes(x=Group.1, y=Converted))+
+    geom_point() +
+    geom_line() +
+    ggtitle("Number of High Brands Univariate Response Plot") +
+    xlab("Number of High Brands") +
+    ylab("Conversion Rate")
+
+ggplot(data=leads, aes(x = NumberHighBrands)) +
+    geom_histogram(binwidth=1, color="black", fill="white") +
+    ggtitle("Count of the Number of High Brands") +
+    xlab("Number of High Brands") +
+    ylab("Count")
+```
+
+======================================================
+
+#### Exploratory Analysis ####
+
+##### Correlation Matrix #####
+- By using a correlation matrix, you can see which variables correlate closest to the the conversion variable.  Those that correlate best to conversion are Lead Age, Urban, Married, NumberFashionMag and HHIncome.
+```{r}
+# use the original leads data frame for the correlation
+leads$Sale.Type <- temp
+
+# Only include variables in the original leads data frame
+cor(leads[,(2:11)])
+```
+
+##### Percent of Items Kept #####
+- This graph represents a count of the percent of items kept.  Most people keep between 10% and 35% of their items.
+```{r}
+qplot(x = percent.kept, data = products, 
+      binwidth = 5, color = I('black'), fill = I('#F79420')) + 
+    scale_x_continuous(breaks = seq(0, 100, 5), lim = c(0,100)) +
+    ggtitle("Count of Percent of Total Items Kept") + 
+    xlab("Percent of Items Kept") +
+    ylab("Count of Customers")
+```
+
+- Summary of the above graph (Percent of Items Kept)
+```{r, echo=TRUE}
+summary(products$percent.kept)
+```
+
+- Summary of the Total Items Kept
+```{r, echo=FALSE}
+summary(products$Total.Items.Kept)
+```
+
+- Summary of the Total Items Shipped
+```{r, echo=FALSE}
+summary(products$Total.Items.Shipped)
+```
+
+##### Style Grouped By Size #####
+- Two graphs comparing size and style
+```{r}
+great.style <- ggplot(data=products, aes(x=Size, y=Total.Great.Style)) + 
+    geom_bar(aes(fill=Size), stat="identity") +
+    facet_grid(. ~ Style) + 
+    ggtitle("Total Great Style for Each Size and Style") + 
+    xlab("Size") +
+    ylab("Total Great Style")
+poor.style <- ggplot(data=products, aes(x=Size, y=Total.Poor.Style)) + 
+    geom_bar(aes(fill=Size), stat="identity") +
+    facet_grid(. ~ Style) + 
+    ggtitle("Total Poor Style for Each Size and Style") + 
+    xlab("Size") +
+    ylab("Total Poor Style")
+grid.arrange(great.style, poor.style, ncol=1)
+```
+
+##### Age #####
+- Below I subset age by converted and non-converted leads with age grouped into buckets of 5 years.  The youngest age of any converted lead is 30 years old.  As age increases, so does the number of converted leads.
+```{r, echo=FALSE}
+leads <- read.csv("/Volumes/MALTER/sample/leads.csv")
+leads$Lead.Age.Rounded <- x.rounded(leads$Lead.Age,5)
+```
+
+```{r}
+age.converted <- qplot(x = Lead.Age.Rounded, data = subset(leads, Converted == 1), 
+                       binwidth=5, color = I('black'), fill = I('#5760AB')) +
+  scale_x_continuous(breaks = seq(30, 80, 5), lim = c(30,50)) +
+  ggtitle("Count of Age (Converted Leads)") + 
+  xlab("Age") +
+  ylab("Count")
+age.not.converted <- qplot(x = Lead.Age.Rounded, data = subset(leads, Converted == 0), 
+                           binwidth=5, color = I('black'), fill = I('#5760AB')) +
+  scale_x_continuous(breaks = seq(0, 80, 5), lim = c(18,50)) +
+  ggtitle("Count of Age (Not Converted Leads)") + 
+  xlab("Age") +
+  ylab("Count")
+grid.arrange(age.converted, age.not.converted, ncol=1)
+```
+
+##### Household Income #####
+- Box plot used to show the distribution of household income.
+```{r}
+boxplot(HHIncome~Converted, data=leads,
+        col = c("#5760AB", "#F79420"),
+        main="Household Income Box Plot", 
+        xlab="Conversion (0 = Not-Converted; 1 = Converted)",
+        ylab="Household Income (in thousands)")
+```
+
+- The area under the density plot represents the probability of getting a converted or non-converted customer based on their household income.  The overlap represents the range of income where leads are not automatically determined as 0 or 1, as they are with low income (all not converted) or high income (all converted)
+```{r}
+mean.hhincome <- ddply(leads, "Converted", summarise, rating.mean=mean(HHIncome))
+
+leads$Converted <- as.numeric(as.character(leads$Converted))
+ggplot(leads, aes(x=HHIncome, fill=factor(Converted))) + 
+    geom_density(alpha=.3, size=.5) +
+    geom_vline(data=mean.hhincome, aes(xintercept=rating.mean, color=c("blue", "red")),
+               linetype="dashed", size=1) +
+    scale_x_continuous(breaks = seq(15, 125, 10), lim = c(15,125)) +
+    annotate("text", x = 59, y = .01, 
+             label = "mean = 60.3", color="black", size=5) +
+    annotate("text", x = 92, y = .01, 
+             label = "mean = 93.6", color="black", size=5) +
+    ggtitle("Household Income Density Graph") + 
+    xlab("Household Income") +
+    ylab("Density")
+
+by(leads$HHIncome, leads$Converted, summary)
+```
+
+
+###### Scatter Plot of Age and Household Income for Conversion Type ######
+- Below is a scatter plot of age and household income for leads that are both converted and not converted.  This allows us to visually see that converted leads are between the age of 30-50 and have a household income between 68k-118k.
+```{r}
+ggplot(leads, aes(x=Lead.Age, y=HHIncome, color=HHIncome)) + 
+    geom_point(shape=16) +
+    theme_bw() +
+    geom_smooth(method=lm) +
+    facet_grid(Converted ~ .) +
+    theme(strip.text.x = element_text(size=8, angle=75),
+          strip.text.y = element_text(size=12, face="bold")) +
+    ggtitle("Household Income verus Age for Conversions Status") + 
+    xlab("Lead Age") +
+    ylab("Household Income")
+```
+```{r}
+summary(leads$HHIncome)
+```
+
+##### Brand by Style #####
+
+```{r, fig.keep='none'}
+ggplot(subset(products, Style == "Formal"), aes(Brand, Percent.Dollars.Kept)) + 
+    geom_boxplot(aes(fill = Brand)) +
+    theme(legend.position = "none") +
+    geom_jitter(alpha=4/10) +
+    ggtitle("Percent of Dollars Kept by Brand for Formal Styles") +
+    theme(axis.text.x=element_text(angle=90)) +
+    xlab("Brand") +
+    ylab("Percent of Dollars Kept")
+```
+```{r, fig.keep='none'}
+ggplot(subset(products, Style == "Work"), aes(Brand, Percent.Dollars.Kept)) + 
+    geom_boxplot(aes(fill = Brand)) +
+    theme(legend.position = "none") +
+    geom_jitter(alpha=4/10) +
+    ggtitle("Percent of Dollars Kept by Brand for Work Styles") +
+    theme(axis.text.x=element_text(angle=90)) +
+    xlab("Brand") +
+    ylab("Percent of Dollars Kept")
+```
+- Below are box plots comparing the percent of dollars kept for each brand and style. This gives a representation of which brands are being worn for which occasion.  For example, BCBG is popular to be worn as work clothes, but not so much as formal clothing.
+- Black dots represent outliers in the data
+```{r, echo=FALSE}
+ggplot(subset(products, Style == "Formal"), aes(Brand, Percent.Dollars.Kept)) + 
+    geom_boxplot(aes(fill = Brand)) +
+    theme(legend.position = "none") +
+    geom_jitter(alpha=4/10) +
+    ggtitle("Percent of Dollars Kept by Brand for Formal Styles") +
+    theme(axis.text.x=element_text(angle=90)) +
+    xlab("Brand") +
+    ylab("Percent of Dollars Kept")
+```
+```{r, echo=FALSE}
+ggplot(subset(products, Style == "Work"), aes(Brand, Percent.Dollars.Kept)) + 
+    geom_boxplot(aes(fill = Brand)) +
+    theme(legend.position = "none") +
+    geom_jitter(alpha=4/10) +
+    ggtitle("Percent of Dollars Kept by Brand for Work Styles") +
+    theme(axis.text.x=element_text(angle=90)) +
+    xlab("Brand") +
+    ylab("Percent of Dollars Kept")
+```
